@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>NCN TIN - High Quality Visuals</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/cesium@1.115.0/Build/Cesium/Cesium.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/cesium@1.115.0/Build/Cesium/Widgets/widgets.css" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/proj4@2.9.0/dist/proj4.js"></script>
+
+  <style>
+    html, body, #cesiumContainer { height: 100%; width: 100%; margin: 0; overflow: hidden; }
+    
+    #toolbar {
+      position: absolute; top: 20px; left: 20px;
+      background: rgba(30, 30, 30, 0.9); padding: 15px; border-radius: 8px;
+      color: #eee; font-family: 'Segoe UI', sans-serif; z-index: 1000; min-width: 200px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.6); backdrop-filter: blur(5px);
+    }
+    #toolbar h3 { margin: 0 0 10px 0; font-size: 14px; border-bottom: 1px solid #555; padding-bottom: 5px; text-transform: uppercase; letter-spacing: 1px; color: #aaa;}
+    
+    .toggle-row { margin-bottom: 8px; display: flex; align-items: center; cursor: pointer; font-size: 14px; transition: color 0.2s;}
+    .toggle-row:hover { color: #fff; }
+    .toggle-row input { margin-right: 10px; transform: scale(1.2); cursor: pointer; accent-color: #00bcd4; }
+    .separator { border-top: 1px solid #555; margin: 10px 0; }
+  </style>
+</head>
+
+<body>
+  <div id="cesiumContainer"></div>
+
+  <div id="toolbar">
+    <div style="display:none;">
+        <label class="toggle-row">
+            <input type="checkbox" id="chkWireframe" checked> 
+            <span>🕸️ Tel Çerçeve</span>
+        </label>
+        <label class="toggle-row">
+            <input type="checkbox" id="chkShadows" checked>
+            <span>☀️ Güneş/Gölge</span>
+        </label>
+    </div>
+
+    <h3>Modeller</h3>
+    <label class="toggle-row"><input type="checkbox" id="chkRed" checked><span>🔴 Kırmızı Model</span></label>
+    <label class="toggle-row"><input type="checkbox" id="chkBlack" checked><span>⚫ Siyah Model</span></label>
+    
+    <div class="separator"></div>
+    
+    <h3>Noktalar</h3>
+    <label class="toggle-row"><input type="checkbox" id="chkRedPoints"><span>📍 Kırmızı Noktalar</span></label>
+    <label class="toggle-row"><input type="checkbox" id="chkBlackPoints"><span>📍 Siyah Noktalar</span></label>
+  </div>
+
+  <script>
+    Cesium.Ion.defaultAccessToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJhMTUwOGUwOS1lYTc3LTQ0MWEtYmU1MS02NmEyZGZkNzIyMzUiLCJpZCI6MzQ1NzMsImlhdCI6MTYwMDUwMDY1NX0.NEx-UMwAvC_1k7e3psWIseWa03JxfT6if9B6J7OUfww";
+
+    const viewer = new Cesium.Viewer("cesiumContainer", {
+      terrain: Cesium.Terrain.fromWorldTerrain(),
+      animation: false, timeline: false, baseLayerPicker: true,
+      selectionIndicator: false, infoBox: false,
+      sceneModePicker: false,
+      contextOptions: {
+        webgl: {
+          alpha: true,
+          antialias: true, 
+          powerPreference: "high-performance"
+        }
+      }
+    });
+
+    var googleImagery = new Cesium.UrlTemplateImageryProvider({
+       url: "https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
+       maximumLevel: 20, credit: "Google"
+    });
+    viewer.imageryLayers.addImageryProvider(googleImagery);
+
+    viewer.scene.globe.enableLighting = true; 
+    viewer.clock.currentTime = Cesium.JulianDate.fromIso8601("2023-06-01T10:00:00Z");
+
+    const projDOM33 = "+proj=tmerc +lat_0=0 +lon_0=33 +k=1 +x_0=500000 +y_0=0 +datum=WGS84 +units=m +no_defs";
+
+    async function loadTIN(url, surfaceColor, wireframeColor, zOffsetMeters) {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) return null;
+        const data = await res.json();
+        
+        const posSurface = [];   
+        const posWireframe = []; 
+        const cartesians = []; 
+        const indices = [];
+        let index = 0;
+        const wireframeLift = 0.15; 
+
+        data.triangles.forEach(tri => {
+          tri.forEach(p => {
+            const lonlat = proj4(projDOM33, "WGS84", [p[0], p[1]]);
+            const cartSurface = Cesium.Cartesian3.fromDegrees(lonlat[0], lonlat[1], p[2] + zOffsetMeters);
+            posSurface.push(cartSurface.x, cartSurface.y, cartSurface.z);
+            cartesians.push(cartSurface);
+
+            const cartWireframe = Cesium.Cartesian3.fromDegrees(lonlat[0], lonlat[1], p[2] + zOffsetMeters + wireframeLift);
+            posWireframe.push(cartWireframe.x, cartWireframe.y, cartWireframe.z);
+          });
+          indices.push(index, index + 1, index + 2);
+          index += 3;
+        });
+
+        let geometrySurface = new Cesium.Geometry({
+          attributes: { position: new Cesium.GeometryAttribute({ componentDatatype: Cesium.ComponentDatatype.DOUBLE, componentsPerAttribute: 3, values: new Float64Array(posSurface) }) },
+          indices: new Uint32Array(indices),
+          primitiveType: Cesium.PrimitiveType.TRIANGLES,
+          boundingSphere: Cesium.BoundingSphere.fromVertices(posSurface)
+        });
+
+        geometrySurface = Cesium.GeometryPipeline.computeNormal(geometrySurface);
+
+        let geometryWireframeBase = new Cesium.Geometry({
+          attributes: { position: new Cesium.GeometryAttribute({ componentDatatype: Cesium.ComponentDatatype.DOUBLE, componentsPerAttribute: 3, values: new Float64Array(posWireframe) }) },
+          indices: new Uint32Array(indices),
+          primitiveType: Cesium.PrimitiveType.TRIANGLES,
+          boundingSphere: Cesium.BoundingSphere.fromVertices(posWireframe)
+        });
+        const geometryWireframe = Cesium.GeometryPipeline.toWireframe(geometryWireframeBase);
+
+        const surfacePrimitive = new Cesium.Primitive({
+          geometryInstances: new Cesium.GeometryInstance({ geometry: geometrySurface }),
+          appearance: new Cesium.MaterialAppearance({
+            material: new Cesium.Material({ 
+                fabric: { type: "Color", uniforms: { color: surfaceColor } } 
+            }),
+            flat: false, 
+            translucent: surfaceColor.alpha < 1.0, 
+            closed: false,
+            faceForward: true 
+          }),
+          asynchronous: false
+        });
+
+        const wireframePrimitive = new Cesium.Primitive({
+          geometryInstances: new Cesium.GeometryInstance({ geometry: geometryWireframe }),
+          appearance: new Cesium.MaterialAppearance({
+            material: new Cesium.Material({ fabric: { type: "Color", uniforms: { color: wireframeColor } } }),
+            flat: true, 
+            translucent: false, 
+            renderState: { lineWidth: 1.5 }
+          }),
+          asynchronous: false,
+          show: true
+        });
+
+        viewer.scene.primitives.add(surfacePrimitive);
+        viewer.scene.primitives.add(wireframePrimitive);
+
+        return { 
+          surface: surfacePrimitive, 
+          wireframe: wireframePrimitive, 
+          boundingSphere: Cesium.BoundingSphere.fromPoints(cartesians) 
+        };
+
+      } catch (e) { console.error("TIN hatası:", e); return null; }
+    }
+
+    async function loadPoints(url, zOffsetMeters, pointColor) {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) return null;
+        const pointsData = await res.json();
+        const dataSource = new Cesium.CustomDataSource("NCN_Points_" + url);
+
+        pointsData.forEach(pt => {
+          const lonlat = proj4(projDOM33, "WGS84", [pt.coords[0], pt.coords[1]]);
+          const zFinal = pt.coords[2] + zOffsetMeters;
+          dataSource.entities.add({
+            position: Cesium.Cartesian3.fromDegrees(lonlat[0], lonlat[1], zFinal),
+            point: { pixelSize: 7, color: pointColor, outlineColor: Cesium.Color.WHITE, outlineWidth: 1, heightReference: Cesium.HeightReference.NONE },
+            label: {
+              text: pt.name, font: 'bold 14px Segoe UI', style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+              fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: 4,
+              horizontalOrigin: Cesium.HorizontalOrigin.LEFT, verticalOrigin: Cesium.VerticalOrigin.BOTTOM,   
+              pixelOffset: new Cesium.Cartesian2(8, -8), disableDepthTestDistance: Number.POSITIVE_INFINITY 
+            }
+          });
+        });
+        viewer.dataSources.add(dataSource);
+        return dataSource;
+      } catch (e) { return null; }
+    }
+
+    (async () => {
+      const zOffset = 65; 
+
+      const resRedTIN   = await loadTIN("red_tin.json",   Cesium.Color.RED.withAlpha(0.7),   Cesium.Color.WHITE.withAlpha(0.9), zOffset);
+      const resBlackTIN = await loadTIN("black_tin.json", Cesium.Color.DARKSLATEGRAY.withAlpha(1), Cesium.Color.CYAN.withAlpha(0.9),  zOffset);
+      
+      const resRedPoints = await loadPoints("red_points.json", zOffset, Cesium.Color.RED); 
+      const resBlackPoints = await loadPoints("black_points.json", zOffset, Cesium.Color.BLACK); 
+
+      // --- ETKİLEŞİM KODLARI ---
+      const chkWireframe = document.getElementById('chkWireframe');
+      const chkShadows = document.getElementById('chkShadows');
+
+      // Wireframe Genel Aç/Kapa
+      chkWireframe.addEventListener('change', e => {
+        const show = e.target.checked;
+        if (resRedTIN && document.getElementById('chkRed').checked) resRedTIN.wireframe.show = show;
+        if (resBlackTIN && document.getElementById('chkBlack').checked) resBlackTIN.wireframe.show = show;
+      });
+
+      // Güneş/Işık Aç/Kapa
+      chkShadows.addEventListener('change', e => {
+         viewer.scene.globe.enableLighting = e.target.checked;
+      });
+
+      // Model Aç/Kapa
+      if (resRedTIN) {
+        document.getElementById('chkRed').addEventListener('change', e => {
+          resRedTIN.surface.show = e.target.checked;
+          resRedTIN.wireframe.show = e.target.checked && chkWireframe.checked;
+        });
+      }
+
+      if (resBlackTIN) {
+        document.getElementById('chkBlack').addEventListener('change', e => {
+          resBlackTIN.surface.show = e.target.checked;
+          resBlackTIN.wireframe.show = e.target.checked && chkWireframe.checked;
+        });
+      }
+
+      // Nokta Aç/Kapa
+      // ⚡ DÜZELTME: Başlangıçta noktaların görünürlüğünü kutucuğun durumuna (Unchecked) eşitle
+      if (resRedPoints) {
+        const chk = document.getElementById('chkRedPoints');
+        resRedPoints.show = chk.checked; // False (gizli) başlar
+        chk.addEventListener('change', e => resRedPoints.show = e.target.checked);
+      }
+      
+      if (resBlackPoints) {
+        const chk = document.getElementById('chkBlackPoints');
+        resBlackPoints.show = chk.checked; // False (gizli) başlar
+        chk.addEventListener('change', e => resBlackPoints.show = e.target.checked);
+      }
+
+      if (resRedTIN) viewer.camera.flyToBoundingSphere(resRedTIN.boundingSphere, { duration: 2.0 });
+    })();
+  </script>
+</body>
+</html>
